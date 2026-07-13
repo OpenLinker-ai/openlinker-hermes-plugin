@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openlinker-hermes-plugin"
+version = "0.1.0"
+description = "Hermes Agent plugin for registering Hermes as an OpenLinker runtime agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "OpenLinker" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+openlinker = "hermes_openlinker:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_openlinker"]
+artifacts = ["plugin.yaml", "__init__.py"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
