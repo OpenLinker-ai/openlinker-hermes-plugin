@@ -1,6 +1,6 @@
 name: openlinker
 version: 0.1.0
-description: Register Hermes Agent as an OpenLinker native runtime agent.
+description: Connect Hermes Agent to OpenLinker Runtime.
 author: OpenLinker
 license: MIT
 kind: standalone

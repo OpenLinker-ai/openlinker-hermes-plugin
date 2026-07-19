@@ -90,6 +90,16 @@ def _int_env(name: str, default: int = 0) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _list_env(name: str) -> list[str]:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -97,25 +107,63 @@ def _list_env(name: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _first_env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def _runtime_transport() -> str:
+    raw = _first_env(
+        "OPENLINKER_RUNTIME_TRANSPORT",
+        "OPENLINKER_WORKER_CONNECTOR",
+        default="auto",
+    ).lower()
+    aliases = {
+        "runtime_pull": "pull",
+        "http": "pull",
+        "runtime_ws": "ws",
+        "websocket": "ws",
+    }
+    return aliases.get(raw, raw)
+
+
 @dataclass
 class OpenLinkerHermesConfig:
-    api_base: str = ""
+    platform_url: str = ""
+    runtime_url: str = ""
+    node_id: str = ""
+    agent_id: str = ""
+    agent_token: str = ""
     user_token: str = ""
-    runtime_token: str = ""
-    connector: str = "runtime_pull"
-    max_runs: int = 0
-    pull_wait_seconds: float = 25.0
+    legacy_runtime_token: str = ""
+    transport: str = "auto"
+    runtime_mtls_cert_file: str = ""
+    runtime_mtls_key_file: str = ""
+    runtime_mtls_ca_file: str = ""
+    runtime_mtls_server_name: str = ""
+    runtime_data_dir: str = ""
+    capacity: int = 1
+    claim_wait_seconds: float = 25.0
     runtime_enabled: bool = False
     auto_register: bool = True
     register_policy: str = "reuse_existing"
     registration_env: str = field(default_factory=default_registration_env_path)
     agent_slug: str = "hermes-agent-local"
     agent_name: str = "Hermes Agent"
-    agent_description: str = "Hermes Agent runtime registered through openlinker-hermes-plugin."
+    agent_description: str = (
+        "Hermes Agent runtime registered through openlinker-hermes-plugin."
+    )
     agent_visibility: str = "private"
-    agent_tags: list[str] = field(default_factory=lambda: ["agent", "runtime", "hermes"])
-    token_name: str = "hermes-agent runtime"
-    token_scopes: list[str] = field(default_factory=lambda: ["agent:pull", "agent:call"])
+    agent_tags: list[str] = field(
+        default_factory=lambda: ["agent", "runtime", "hermes"]
+    )
+    token_name: str = "Hermes Agent runtime"
+    token_scopes: list[str] = field(
+        default_factory=lambda: ["agent:pull", "agent:call"]
+    )
     backend: str = "hermes_agent"
     hermes_system_message: str = ""
     hermes_max_iterations: int = 90
@@ -136,15 +184,40 @@ class OpenLinkerHermesConfig:
     def from_env(cls) -> "OpenLinkerHermesConfig":
         load_config_env_files()
         return cls(
-            api_base=os.getenv("OPENLINKER_API_BASE", "").strip(),
+            platform_url=_first_env("OPENLINKER_URL", "OPENLINKER_API_BASE"),
+            runtime_url=os.getenv("OPENLINKER_RUNTIME_URL", "").strip(),
+            node_id=os.getenv("OPENLINKER_NODE_ID", "").strip(),
+            agent_id=os.getenv("OPENLINKER_AGENT_ID", "").strip(),
+            agent_token=os.getenv("OPENLINKER_AGENT_TOKEN", "").strip(),
             user_token=os.getenv("OPENLINKER_USER_TOKEN", "").strip(),
-            runtime_token=os.getenv("OPENLINKER_RUNTIME_TOKEN", "").strip(),
-            connector=os.getenv("OPENLINKER_WORKER_CONNECTOR", "runtime_pull").strip() or "runtime_pull",
-            max_runs=_int_env("OPENLINKER_WORKER_MAX_RUNS", 0),
-            pull_wait_seconds=float(os.getenv("OPENLINKER_WORKER_PULL_WAIT_SECONDS", "25") or "25"),
+            legacy_runtime_token=os.getenv("OPENLINKER_RUNTIME_TOKEN", "").strip(),
+            transport=_runtime_transport(),
+            runtime_mtls_cert_file=os.getenv(
+                "OPENLINKER_RUNTIME_MTLS_CERT_FILE", ""
+            ).strip(),
+            runtime_mtls_key_file=os.getenv(
+                "OPENLINKER_RUNTIME_MTLS_KEY_FILE", ""
+            ).strip(),
+            runtime_mtls_ca_file=os.getenv(
+                "OPENLINKER_RUNTIME_MTLS_CA_FILE", ""
+            ).strip(),
+            runtime_mtls_server_name=os.getenv(
+                "OPENLINKER_RUNTIME_MTLS_SERVER_NAME", ""
+            ).strip(),
+            runtime_data_dir=os.getenv(
+                "OPENLINKER_RUNTIME_DATA_DIR",
+                str(hermes_home() / "openlinker-runtime"),
+            ).strip()
+            or str(hermes_home() / "openlinker-runtime"),
+            capacity=_int_env("OPENLINKER_RUNTIME_CAPACITY", 1),
+            claim_wait_seconds=_float_env(
+                "OPENLINKER_RUNTIME_CLAIM_WAIT_SECONDS", 25.0
+            ),
             runtime_enabled=_bool_env("OPENLINKER_RUNTIME_ENABLED", False),
             auto_register=_bool_env("OPENLINKER_AUTO_REGISTER", True),
-            register_policy=os.getenv("OPENLINKER_REGISTER_POLICY", "reuse_existing").strip()
+            register_policy=os.getenv(
+                "OPENLINKER_REGISTER_POLICY", "reuse_existing"
+            ).strip()
             or "reuse_existing",
             registration_env=os.getenv(
                 "OPENLINKER_REGISTRATION_ENV", default_registration_env_path()
@@ -152,33 +225,53 @@ class OpenLinkerHermesConfig:
             or default_registration_env_path(),
             agent_slug=os.getenv("OPENLINKER_AGENT_SLUG", "hermes-agent-local").strip()
             or "hermes-agent-local",
-            agent_name=os.getenv("OPENLINKER_AGENT_NAME", "Hermes Agent").strip() or "Hermes Agent",
+            agent_name=os.getenv("OPENLINKER_AGENT_NAME", "Hermes Agent").strip()
+            or "Hermes Agent",
             agent_description=os.getenv(
                 "OPENLINKER_AGENT_DESCRIPTION",
                 "Hermes Agent runtime registered through openlinker-hermes-plugin.",
             ).strip(),
-            agent_visibility=os.getenv("OPENLINKER_AGENT_VISIBILITY", "private").strip() or "private",
-            agent_tags=_list_env("OPENLINKER_AGENT_TAGS") or ["agent", "runtime", "hermes"],
-            token_name=os.getenv("OPENLINKER_RUNTIME_TOKEN_NAME", "hermes-agent runtime").strip()
-            or "hermes-agent runtime",
-            token_scopes=_list_env("OPENLINKER_RUNTIME_TOKEN_SCOPES") or ["agent:pull", "agent:call"],
+            agent_visibility=os.getenv("OPENLINKER_AGENT_VISIBILITY", "private").strip()
+            or "private",
+            agent_tags=_list_env("OPENLINKER_AGENT_TAGS")
+            or ["agent", "runtime", "hermes"],
+            token_name=_first_env(
+                "OPENLINKER_AGENT_TOKEN_NAME",
+                "OPENLINKER_RUNTIME_TOKEN_NAME",
+                default="Hermes Agent runtime",
+            ),
+            token_scopes=(
+                _list_env("OPENLINKER_AGENT_TOKEN_SCOPES")
+                or _list_env("OPENLINKER_RUNTIME_TOKEN_SCOPES")
+                or ["agent:pull", "agent:call"]
+            ),
             backend=os.getenv("OPENLINKER_HERMES_BACKEND", "hermes_agent").strip()
             or "hermes_agent",
-            hermes_system_message=os.getenv("OPENLINKER_HERMES_SYSTEM_MESSAGE", "").strip(),
+            hermes_system_message=os.getenv(
+                "OPENLINKER_HERMES_SYSTEM_MESSAGE", ""
+            ).strip(),
             hermes_max_iterations=_int_env("OPENLINKER_HERMES_MAX_ITERATIONS", 90),
             hermes_skip_memory=_bool_env("OPENLINKER_HERMES_SKIP_MEMORY", False),
-            hermes_load_soul_identity=_bool_env("OPENLINKER_HERMES_LOAD_SOUL_IDENTITY", False),
+            hermes_load_soul_identity=_bool_env(
+                "OPENLINKER_HERMES_LOAD_SOUL_IDENTITY", False
+            ),
             hermes_enabled_toolsets=_list_env("OPENLINKER_HERMES_TOOLSETS"),
             hermes_disabled_toolsets=_list_env("OPENLINKER_HERMES_DISABLED_TOOLSETS"),
-            dispatch_tool=os.getenv("OPENLINKER_HERMES_DISPATCH_TOOL", "delegate_task").strip()
+            dispatch_tool=os.getenv(
+                "OPENLINKER_HERMES_DISPATCH_TOOL", "delegate_task"
+            ).strip()
             or "delegate_task",
             dispatch_toolsets=_list_env("OPENLINKER_HERMES_TOOLSETS"),
-            dispatch_fallback_to_cli=_bool_env("OPENLINKER_HERMES_DISPATCH_FALLBACK_TO_CLI", True),
+            dispatch_fallback_to_cli=_bool_env(
+                "OPENLINKER_HERMES_DISPATCH_FALLBACK_TO_CLI", True
+            ),
             hermes_cli_command=os.getenv("OPENLINKER_HERMES_CLI_COMMAND", "").strip(),
             hermes_cli_args=_list_env("OPENLINKER_HERMES_CLI_ARGS"),
             turn_command=os.getenv("OPENLINKER_HERMES_TURN_COMMAND", "").strip(),
             command_cwd=os.getenv("OPENLINKER_HERMES_COMMAND_CWD", "").strip(),
-            echo_backend_prefix=os.getenv("OPENLINKER_HERMES_ECHO_PREFIX", "Hermes OpenLinker echo").strip()
+            echo_backend_prefix=os.getenv(
+                "OPENLINKER_HERMES_ECHO_PREFIX", "Hermes OpenLinker echo"
+            ).strip()
             or "Hermes OpenLinker echo",
         )
 
@@ -187,3 +280,30 @@ class OpenLinkerHermesConfig:
         if not path:
             return default_registration_env_path()
         return str(Path(path).expanduser())
+
+    def runtime_missing(self) -> list[str]:
+        required = {
+            "OPENLINKER_URL": self.platform_url,
+            "OPENLINKER_NODE_ID": self.node_id,
+            "OPENLINKER_AGENT_ID": self.agent_id,
+            "OPENLINKER_AGENT_TOKEN": self.agent_token,
+            "OPENLINKER_RUNTIME_MTLS_CERT_FILE": self.runtime_mtls_cert_file,
+            "OPENLINKER_RUNTIME_MTLS_KEY_FILE": self.runtime_mtls_key_file,
+            "OPENLINKER_RUNTIME_MTLS_CA_FILE": self.runtime_mtls_ca_file,
+            "OPENLINKER_RUNTIME_DATA_DIR": self.runtime_data_dir,
+        }
+        return [name for name, value in required.items() if not value]
+
+    def migration_errors(self) -> list[str]:
+        errors: list[str] = []
+        if self.legacy_runtime_token and not self.agent_token:
+            errors.append(
+                "OPENLINKER_RUNTIME_TOKEN is obsolete and cannot be used as an Agent Token. "
+                "Register the Agent again to obtain OPENLINKER_AGENT_TOKEN."
+            )
+        if self.transport not in {"auto", "ws", "pull"}:
+            errors.append(
+                "OPENLINKER_RUNTIME_TRANSPORT must be auto, ws, or pull "
+                "(runtime_ws and runtime_pull remain accepted aliases)."
+            )
+        return errors

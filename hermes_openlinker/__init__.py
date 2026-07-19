@@ -42,13 +42,17 @@ def register(ctx: Any) -> None:
 def _slash_status(cfg: OpenLinkerHermesConfig) -> str:
     worker = current_worker()
     running = bool(worker and worker.thread.is_alive())
+    error = type(worker.error).__name__ if worker and worker.error else ""
+    missing = cfg.runtime_missing()
     return (
         "OpenLinker Hermes plugin\n"
-        f"- runtime_enabled: {cfg.runtime_enabled}\n"
-        f"- worker_running: {running}\n"
-        f"- connector: {cfg.connector}\n"
-        f"- agent_slug: {cfg.agent_slug}\n"
-        f"- backend: {cfg.backend}\n"
+        f"- start worker with Hermes: {cfg.runtime_enabled}\n"
+        f"- worker running: {running}\n"
+        f"- connection: {cfg.transport}\n"
+        f"- Agent: {cfg.agent_slug}\n"
+        f"- Hermes backend: {cfg.backend}\n"
+        f"- missing local settings: {', '.join(missing) if missing else 'none'}\n"
+        f"- last worker error type: {error or 'none'}\n"
     )
 
 
