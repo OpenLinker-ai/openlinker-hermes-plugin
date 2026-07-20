@@ -24,8 +24,12 @@ _session_lock = threading.Lock()
 _session_messages: dict[str, list[dict[str, Any]]] = {}
 
 
-async def run_hermes_turn(ctx: Any, run: runtime.NativeRun, cfg: OpenLinkerHermesConfig) -> HermesTurnResult:
-    text = run.text() or "hello"
+async def run_hermes_turn(
+    ctx: Any,
+    run: runtime.RuntimeContext,
+    cfg: OpenLinkerHermesConfig,
+) -> HermesTurnResult:
+    text = _input_text(run.input) or "hello"
     backend = cfg.backend.strip().lower()
     if backend == "hermes_agent":
         return await _hermes_agent_turn(run, cfg, text)
@@ -36,7 +40,9 @@ async def run_hermes_turn(ctx: Any, run: runtime.NativeRun, cfg: OpenLinkerHerme
     if backend == "command":
         return await _command_turn(run, cfg, text)
     if backend == "echo":
-        return HermesTurnResult(text=f"{cfg.echo_backend_prefix}: {text}", raw={"backend": "echo"})
+        return HermesTurnResult(
+            text=f"{cfg.echo_backend_prefix}: {text}", raw={"backend": "echo"}
+        )
     raise RuntimeError(
         "openlinker-hermes-plugin: unsupported OPENLINKER_HERMES_BACKEND "
         f"{cfg.backend!r}; use hermes_agent, dispatch_tool, hermes_cli, command, or echo"
@@ -44,7 +50,7 @@ async def run_hermes_turn(ctx: Any, run: runtime.NativeRun, cfg: OpenLinkerHerme
 
 
 async def _hermes_agent_turn(
-    run: runtime.NativeRun,
+    run: runtime.RuntimeContext,
     cfg: OpenLinkerHermesConfig,
     text: str,
 ) -> HermesTurnResult:
@@ -68,9 +74,14 @@ async def _hermes_agent_turn(
             agent_kwargs["disabled_toolsets"] = cfg.hermes_disabled_toolsets
 
         signature = inspect.signature(AIAgent)
-        if not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        if not any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        ):
             agent_kwargs = {
-                key: value for key, value in agent_kwargs.items() if key in signature.parameters
+                key: value
+                for key, value in agent_kwargs.items()
+                if key in signature.parameters
             }
         agent = AIAgent(**agent_kwargs)
         result = agent.run_conversation(
@@ -83,7 +94,9 @@ async def _hermes_agent_turn(
         messages = result.get("messages") if isinstance(result, dict) else None
         if isinstance(messages, list):
             with _session_lock:
-                _session_messages[session_id] = [dict(item) for item in messages if isinstance(item, dict)]
+                _session_messages[session_id] = [
+                    dict(item) for item in messages if isinstance(item, dict)
+                ]
         return HermesTurnResult(
             text=answer,
             raw={
@@ -98,7 +111,7 @@ async def _hermes_agent_turn(
 
 async def _dispatch_tool_turn(
     ctx: Any,
-    run: runtime.NativeRun,
+    run: runtime.RuntimeContext,
     cfg: OpenLinkerHermesConfig,
     text: str,
 ) -> HermesTurnResult:
@@ -111,9 +124,9 @@ async def _dispatch_tool_turn(
         "input": text,
         "metadata": {
             "source": "openlinker",
-            "run_id": run.assignment.run_id,
-            "agent_id": run.assignment.agent_id,
-            "assignment": run.assignment.to_dict(),
+            "run_id": run.run_id,
+            "agent_id": run.agent_id,
+            "assignment": _assignment_payload(run),
         },
     }
     if cfg.dispatch_toolsets:
@@ -127,7 +140,7 @@ async def _dispatch_tool_turn(
 
 
 async def _hermes_cli_turn(
-    run: runtime.NativeRun,
+    run: runtime.RuntimeContext,
     cfg: OpenLinkerHermesConfig,
     text: str,
 ) -> HermesTurnResult:
@@ -155,7 +168,7 @@ async def _hermes_cli_turn(
 
 
 async def _command_turn(
-    run: runtime.NativeRun,
+    run: runtime.RuntimeContext,
     cfg: OpenLinkerHermesConfig,
     text: str,
 ) -> HermesTurnResult:
@@ -165,7 +178,7 @@ async def _command_turn(
         )
     payload = {
         "text": text,
-        "assignment": run.assignment.to_dict(),
+        "assignment": _assignment_payload(run),
     }
     env = dict(os.environ)
     env["OPENLINKER_HERMES_RUN"] = json.dumps(payload, ensure_ascii=False)
@@ -177,7 +190,9 @@ async def _command_turn(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate(json.dumps(payload, ensure_ascii=False).encode())
+    stdout, stderr = await proc.communicate(
+        json.dumps(payload, ensure_ascii=False).encode()
+    )
     if proc.returncode != 0:
         raise RuntimeError(
             "openlinker-hermes-plugin: turn command failed "
@@ -206,28 +221,52 @@ def _is_unknown_tool(value: Any, tool_name: str) -> bool:
     return False
 
 
-def _session_id_from_run(run: runtime.NativeRun) -> str:
-    assignment = run.assignment
-    conversation = getattr(assignment, "conversation", None)
-    if conversation is not None:
-        for attr in ("session_key", "protocol_context_id", "root_context_id", "id"):
-            value = getattr(conversation, attr, "")
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    a2a = getattr(assignment, "a2a", None)
-    if a2a is not None:
-        for attr in (
+def _session_id_from_run(run: runtime.RuntimeContext) -> str:
+    for container_name in ("conversation", "a2a"):
+        container = run.metadata.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        for key in (
+            "session_key",
             "protocol_context_id",
             "root_context_id",
             "parent_context_id",
             "trace_id",
+            "id",
         ):
-            value = getattr(a2a, attr, "")
+            value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    if assignment.run_id:
-        return f"run-{assignment.run_id}"
+    for key in (
+        "session_key",
+        "protocol_context_id",
+        "root_context_id",
+        "parent_context_id",
+        "trace_id",
+    ):
+        value = run.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if run.run_id:
+        return f"run-{run.run_id}"
     return "runtime-unknown"
+
+
+def _input_text(value: dict[str, Any]) -> str:
+    for key in ("text", "query", "task", "prompt"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    return ""
+
+
+def _assignment_payload(run: runtime.RuntimeContext) -> dict[str, Any]:
+    return {
+        "run_id": run.run_id,
+        "agent_id": run.agent_id,
+        "input": dict(run.input),
+        "metadata": dict(run.metadata),
+    }
 
 
 def _extract_text(value: Any) -> str:

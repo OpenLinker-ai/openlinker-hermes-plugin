@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Hermes plugin
+        uses: actions/checkout@v7
+
+      - name: Check out current OpenLinker Python SDK
+        uses: actions/checkout@v7
+        with:
+          repository: OpenLinker-ai/openlinker-python
+          path: .sdk/openlinker-python
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install SDK, plugin, and test tools
+        run: |
+          python -m pip install -e .sdk/openlinker-python
+          python -m pip install -e ".[dev]"
+
+      - name: Check formatting and lint
+        run: |
+          ruff format --check hermes_openlinker tests
+          ruff check hermes_openlinker tests
+
+      - name: Test against the current SDK
+        run: pytest -q

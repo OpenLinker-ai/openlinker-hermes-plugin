@@ -1,57 +1,33 @@
-# OpenLinker Hermes Plugin Installation
+# Install and operate the OpenLinker Hermes plugin
 
-This guide installs `openlinker-hermes-plugin` as a standard Hermes pip entry-point plugin.
-
-For v0.1, the OpenLinker Python SDK is installed from a local checkout because it is not published
-to PyPI yet.
+[简体中文](INSTALL.zh-CN.md)
 
 ## Requirements
 
-- Hermes Agent installed and working.
-- Python 3.10+ in the same environment used by Hermes.
-- Local checkouts of:
-  - `openlinker-python`
-  - `openlinker-hermes-plugin`
-- An OpenLinker creator token for the one-time registration step.
+- Hermes Agent already works on this machine.
+- Python 3.10 or later in the environment used by Hermes.
+- Local checkouts of `openlinker-python` and `openlinker-hermes-plugin`.
+- A User Token if this is the first Agent registration.
+- A Runtime Node ID and mTLS files supplied by an OpenLinker administrator.
 
-## Install
+The User Token creates or manages the Agent. The Agent Token runs the Agent. The Node ID and mTLS
+files let this machine connect to the Runtime service. These values are not interchangeable.
 
-Use the Python interpreter that Hermes uses. For many Hermes installs this is just:
+## 1. Install
 
 ```bash
 python -m pip install -e /path/to/openlinker-python
 python -m pip install -e /path/to/openlinker-hermes-plugin
+hermes plugins enable openlinker
 ```
 
-If you want to use the Aliyun PyPI mirror for third-party dependencies:
-
-```bash
-python -m pip install \
-  -i https://mirrors.aliyun.com/pypi/simple/ \
-  --trusted-host mirrors.aliyun.com \
-  -e /path/to/openlinker-python
-
-python -m pip install \
-  -i https://mirrors.aliyun.com/pypi/simple/ \
-  --trusted-host mirrors.aliyun.com \
-  -e /path/to/openlinker-hermes-plugin
-```
-
-Confirm Hermes can discover the plugin:
+Confirm Hermes can see it:
 
 ```bash
 hermes plugins list
 ```
 
-## Enable
-
-Enable the entry-point plugin:
-
-```bash
-hermes plugins enable openlinker
-```
-
-Equivalently, add `openlinker` to Hermes config:
+You may also enable it in Hermes configuration:
 
 ```yaml
 plugins:
@@ -59,110 +35,120 @@ plugins:
     - openlinker
 ```
 
-Hermes plugin docs note that pip entry-point plugins use the entry-point key as the enabled name.
-For this package, that name is `openlinker`.
-
-## Register
-
-Register or reuse the OpenLinker runtime agent:
+## 2. Register the Agent
 
 ```bash
+export OPENLINKER_URL="https://api.openlinker.ai"
+export OPENLINKER_USER_TOKEN="ol_user_..."
+
 hermes openlinker register \
-  --user-token "$OPENLINKER_USER_TOKEN" \
   --agent-slug hermes-agent-local \
   --agent-name "Hermes Agent"
 ```
 
-If you use a non-default OpenLinker API host:
+For another OpenLinker deployment, pass `--url` or set `OPENLINKER_URL`.
+`--api-base` and `OPENLINKER_API_BASE` remain temporary compatibility aliases.
+
+Registration is saved to `$HERMES_HOME/openlinker.env`, or
+`~/.hermes/openlinker.env` when `HERMES_HOME` is unset. Choose another file with
+`--registration-env`.
+
+The command output tells you where the file was saved, but does not print the Agent Token.
+
+## 3. Configure the Runtime Node
+
+Ask an OpenLinker administrator for:
+
+- `OPENLINKER_NODE_ID`
+- the client certificate
+- the client private key
+- the CA certificate
+- `OPENLINKER_RUNTIME_URL`, only when Runtime uses a separate address
+
+Set them on the Hermes machine:
 
 ```bash
-hermes openlinker register \
-  --api-base "https://your-openlinker-api.example" \
-  --user-token "$OPENLINKER_USER_TOKEN"
+export OPENLINKER_NODE_ID="..."
+export OPENLINKER_RUNTIME_MTLS_CERT_FILE="/secure/path/client.crt"
+export OPENLINKER_RUNTIME_MTLS_KEY_FILE="/secure/path/client.key"
+export OPENLINKER_RUNTIME_MTLS_CA_FILE="/secure/path/ca.crt"
+export OPENLINKER_RUNTIME_DATA_DIR="$HERMES_HOME/openlinker-runtime"
 ```
 
-The command persists runtime registration state to:
+Protect the registration file and private key so only the Hermes service account can read them.
 
-```text
-$HERMES_HOME/openlinker.env
-```
-
-If `HERMES_HOME` is not set, it uses:
-
-```text
-~/.hermes/openlinker.env
-```
-
-Use a custom state file if needed:
-
-```bash
-hermes openlinker register \
-  --registration-env /secure/path/openlinker.env \
-  --user-token "$OPENLINKER_USER_TOKEN"
-```
-
-## Validate
-
-Check that the persisted runtime token works:
+## 4. Check and run
 
 ```bash
 hermes openlinker status
-```
-
-If you used a custom registration env file:
-
-```bash
-hermes openlinker status --registration-env /secure/path/openlinker.env
-```
-
-## Run Worker
-
-For a foreground worker:
-
-```bash
 hermes openlinker worker
 ```
 
-To start the worker automatically when Hermes loads the plugin, set:
+`status` checks local files and environment variables only. A successful status means the
+required settings are present; it does not prove that the server is reachable.
+
+Use `OPENLINKER_RUNTIME_TRANSPORT=auto` unless an administrator tells you to force `ws` or
+`pull`.
+
+To start the worker whenever Hermes loads:
 
 ```bash
 export OPENLINKER_RUNTIME_ENABLED=true
 ```
 
-or persist it in the registration env file:
+You can put the setting in the registration env file and then restart Hermes.
 
-```env
-OPENLINKER_RUNTIME_ENABLED=true
-```
+## Upgrade from the pre-0.1 Runtime Token setup
 
-Then restart Hermes.
+The old plugin used `OPENLINKER_RUNTIME_TOKEN`, `OPENLINKER_WORKER_CONNECTOR=runtime_pull`,
+and the removed Python SDK Native API.
 
-## Model Selection
+The current setup requires:
 
-The plugin does not choose or override Hermes' model/provider/base URL. Hermes uses its normal
-model configuration.
+1. an Agent ID and Agent Token from `hermes openlinker register`;
+2. a Runtime Node ID;
+3. Runtime mTLS certificate, key, and CA files;
+4. `OPENLINKER_RUNTIME_TRANSPORT=auto|ws|pull`.
 
-If Hermes calls the wrong provider, inspect Hermes config with:
+Do not copy the old Runtime Token into `OPENLINKER_AGENT_TOKEN`. Register again. Legacy connector
+values `runtime_pull` and `runtime_ws` are still mapped to `pull` and `ws` for one migration
+period.
 
-```bash
-hermes config
-hermes model
-```
+`OPENLINKER_WORKER_MAX_RUNS` is no longer supported because the reliable Runtime worker is a
+long-running process. Stop it through normal process or service shutdown.
 
 ## Troubleshooting
 
-If Hermes cannot import `openlinker`, install the local SDK into the same Python environment:
+**Hermes cannot import `openlinker`**
 
-```bash
-python -m pip install -e /path/to/openlinker-python
-```
+Install `openlinker-python` into the same Python environment that runs Hermes.
 
-If `hermes plugins enable openlinker` says the plugin is not installed, verify it is installed in
-the same environment as Hermes:
+**Hermes cannot find the plugin**
 
 ```bash
 python -c "import importlib.metadata as m; print(m.entry_points(group='hermes_agent.plugins'))"
 ```
 
-If `status` says a runtime token is missing, run `register` first. `OPENLINKER_USER_TOKEN` is for
-registration; `OPENLINKER_RUNTIME_TOKEN` is for runtime `status` and `worker`.
+**Status says Agent registration is missing**
+
+Run `hermes openlinker register` with a User Token. If you use a custom registration file, pass
+the same `--registration-env` to every command.
+
+**Status says Runtime settings are missing**
+
+Registration cannot create Runtime Node credentials. Ask an administrator for the Node ID and
+mTLS files listed above.
+
+**The worker reports that `OPENLINKER_RUNTIME_TOKEN` is obsolete**
+
+Remove the old setting after registering again. Do not expose either the old token or the new
+Agent Token in logs or support messages.
+
+**Hermes uses the wrong model or provider**
+
+The plugin does not choose a model. Check the normal Hermes configuration with:
+
+```bash
+hermes config
+hermes model
+```
